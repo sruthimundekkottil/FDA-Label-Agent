@@ -1,0 +1,27 @@
+# Python 3.10+ (developed and verified on CPython 3.14 on Windows).
+# Install:  python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
+#
+# PyTorch is pulled from the CPU-only wheel index to keep the install small.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# --- data collection ---------------------------------------------------------
+requests==2.34.2
+python-dotenv==1.2.4
+
+# --- data handling / results -------------------------------------------------
+pandas==3.0.6
+numpy==2.5.3
+matplotlib==3.11.2
+
+# --- retrieval ---------------------------------------------------------------
+rank_bm25==0.2.2
+torch==2.14.1+cpu
+transformers==5.18.0
+sentence-transformers==6.1.0
+faiss-cpu==1.15.1
+
+# --- app ---------------------------------------------------------------------
+streamlit==1.65.0
+
+# --- tests -------------------------------------------------------------------
+pytest==9.1.1

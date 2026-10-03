@@ -1,0 +1,37 @@
+# --- secrets -----------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# --- virtual environment -----------------------------------------------------
+.venv/
+venv/
+env/
+*.egg-info/
+
+# --- data (re-downloadable / generated) --------------------------------------
+data/raw/
+data/index/
+data/cache/
+data/processed/
+
+# keep the eval set under version control (it is hand-curated)
+!data/eval/
+!data/eval/**
+
+# --- python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- results artefacts that are cheap to regenerate ---------------------------
+results/figures/*.png
+
+# --- editors / OS ------------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

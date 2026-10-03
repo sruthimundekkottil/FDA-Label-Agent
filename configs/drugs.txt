@@ -1,0 +1,32 @@
+# One generic drug name per line. Lines starting with '#' are ignored.
+# 30 common drugs across classes; a few have boxed warnings (good eval material).
+metformin
+lisinopril
+atorvastatin
+amlodipine
+metoprolol
+losartan
+simvastatin
+warfarin
+apixaban
+clopidogrel
+omeprazole
+levothyroxine
+sertraline
+escitalopram
+gabapentin
+ibuprofen
+acetaminophen
+amoxicillin
+azithromycin
+ciprofloxacin
+prednisone
+insulin glargine
+empagliflozin
+semaglutide
+albuterol
+montelukast
+tramadol
+alprazolam
+furosemide
+hydrochlorothiazide
