@@ -143,8 +143,14 @@ def fetch_all(
     limit: int = DEFAULT_LIMIT,
     sleep_s: float = DEFAULT_SLEEP,
     refresh: bool = False,
+    prune: bool = False,
 ) -> dict[str, dict]:
-    """Fetch every drug and write ``data/raw/_fetch_manifest.json``."""
+    """Fetch every drug and write ``data/raw/_fetch_manifest.json``.
+
+    With ``prune=True`` (used when the list comes from ``configs/drugs.txt``)
+    entries for drugs that are no longer configured are dropped, so removing a
+    drug from the file really removes it from the corpus.
+    """
 
     ensure_dirs()
     load_env()
@@ -211,6 +217,13 @@ def fetch_all(
         if position < len(drugs):
             time.sleep(sleep_s)
 
+    if prune:
+        wanted = {slugify(drug) for drug in drugs}
+        for slug in [key for key in manifest if key not in wanted]:
+            logger.info("pruning %s from the manifest (no longer configured)", slug)
+            manifest.pop(slug)
+        write_json(FETCH_MANIFEST, manifest)
+
     return manifest
 
 
@@ -246,11 +259,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    drugs = args.drugs if args.drugs else load_drug_list()
+    from_config = not args.drugs
+    drugs = load_drug_list() if from_config else args.drugs
     if not drugs:
         logger.error("no drugs to fetch (configs/drugs.txt is empty)")
         return 1
-    manifest = fetch_all(drugs, limit=args.limit, sleep_s=args.sleep, refresh=args.refresh)
+    manifest = fetch_all(
+        drugs,
+        limit=args.limit,
+        sleep_s=args.sleep,
+        refresh=args.refresh,
+        prune=from_config,
+    )
     summarize(manifest)
     return 0
 
