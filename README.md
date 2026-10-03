@@ -32,6 +32,33 @@ python -m src.fetch_openfda
 python -m src.parse_labels
 ```
 
+## Method (work in progress)
+
+### Chunking and table handling
+
+The `fixed` and `section` strategies are built **only from plain-text section
+records**; `*_table` fields are deliberately excluded from them, so the baseline
+numbers are not flattered (or distorted) by content those strategies never parse.
+Only `table_aware` adds tables, and it adds them properly:
+
+- `*_table` fields are parsed with BeautifulSoup + lxml rather than treated as
+  text: the caption, header row and data rows are recovered, `rowspan`/`colspan`
+  are honoured, and nested `<list>/<item>` markup is flattened into
+  `"; "`-separated text.
+- Each row is turned into a readable line, using the header row for column names
+  where one exists, e.g. `Adverse reaction: Nausea | Drug: 26% | Placebo: 12%`.
+  This is what makes table questions answerable instead of relying on
+  run-together markup.
+- Every table is kept as its own chunk, a row is **never** split across chunks
+  (chunks are filled line by line), and the caption/context lines are repeated at
+  the top of each piece so a fragment still makes sense on its own.
+- Table chunks carry the **parent** section as their `section`
+  (`adverse_reactions_table` -> `adverse_reactions`) plus `is_table: true`, so
+  retrieval hit-checking and citation display use the same section vocabulary as
+  the plain-text chunks.
+
+No chunk in any strategy contains markup tags (there is a unit test for this).
+
 ## License + disclaimer
 
 MIT (see `LICENSE`). This project uses public openFDA data and is **not** a
