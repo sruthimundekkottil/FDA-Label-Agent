@@ -11,7 +11,12 @@ on semi-structured medical documents.
 Under construction, milestone by milestone:
 
 1. Scaffold — done
-2. Data fetch + parse — in progress
+2. Data fetch + parse — done (30/30 drugs fetched; see `data/raw/_fetch_manifest.json` and `data/processed/sections.jsonl`)
+3. Chunking — next
+
+Raw openFDA responses are cached under `data/raw/` (gitignored); `data/processed/`
+and `data/index/` are gitignored as well, so they are rebuilt by running the
+scripts above.
 
 All results tables in this README are filled in only after the corresponding
 script has been run; anything not run is reported as "not run".
