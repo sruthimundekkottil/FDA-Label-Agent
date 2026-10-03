@@ -10,6 +10,8 @@ import json
 import logging
 import os
 import re
+from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -190,12 +192,33 @@ def normalize_text(text: str) -> str:
     if not text:
         return ""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = text.replace("\u00a0", " ").replace("\u200b", "")
+    for source, replacement in _UNICODE_FIXES.items():
+        text = text.replace(source, replacement)
     text = re.sub(r"[ \t\f\v]+", " ", text)
     lines = [line.strip() for line in text.split("\n")]
     text = "\n".join(lines)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+# Characters that survive HTML entities but hurt CSV output and tokenisation.
+_UNICODE_FIXES = {
+    "\u00a0": " ",   # non-breaking space
+    "\u200b": "",    # zero width space
+    "\ufeff": "",    # BOM
+    "\u2212": "-",   # minus sign
+    "\u2010": "-",   # hyphen
+    "\u2011": "-",   # non-breaking hyphen
+    "\u2012": "-",   # figure dash
+    "\u2013": "-",   # en dash
+    "\u2014": " - ",  # em dash
+    "\u2015": " - ",  # horizontal bar
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201c": '"',
+    "\u201d": '"',
+    "\u2026": "...",
+}
 
 
 _SECTION_HEADING_RE = re.compile(r"^[\s\d\.\)\(]*$")
@@ -226,7 +249,192 @@ def strip_repeated_headings(text: str, section: str) -> str:
 
 
 def clean_section_text(raw: str, section: str) -> str:
-    return strip_repeated_headings(normalize_text(as_text(raw)), section)
+    text = as_text(raw)
+    # A few labels carry stray inline markup in normal sections; drop it.
+    if _ANY_TAG_RE.search(text):
+        text = strip_html_tags(text)
+    return strip_repeated_headings(normalize_text(text), section)
+
+
+# --------------------------------------------------------------------------- #
+# HTML tables -> readable rows
+# --------------------------------------------------------------------------- #
+_ANY_TAG_RE = re.compile(r"<[a-zA-Z/][^>]*>")
+
+
+class _TableToRows(HTMLParser):
+    """Collect caption, header row and data rows from (possibly nested) HTML tables.
+
+    openFDA puts table content in HTML-ish ``*_table`` fields. Raw markup is
+    useless for embeddings, so we recover the rows:
+
+        <tr><th>Adverse reaction</th><th>Drug</th></tr>
+        <tr><td>Nausea</td><td>25%</td></tr>
+
+    becomes ``Adverse reaction: Nausea | Drug: 25%``.
+    """
+
+    LIST_BREAK_TAGS = {"li", "item", "listitem", "p", "div", "br"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.caption_parts: list[str] = []
+        self.rows: list[list[str]] = []
+        self.header_rows: list[bool] = []
+
+        self._table_depth = 0
+        self._in_caption = False
+        self._row: list[str] | None = None
+        self._row_is_header = False
+        self._cell_parts: list[str] | None = None
+        self._cell_is_header = False
+        self._skip_text = False
+
+    # -- helpers ---------------------------------------------------------
+    @staticmethod
+    def _clean(chunks: list[str]) -> str:
+        text = " ".join(chunks)
+        text = text.replace("\u00a0", " ")
+        text = re.sub(r"\s*;\s*", "; ", text)
+        text = re.sub(r"\s+", " ", text)
+        return re.sub(r"^(?:;\s*)+|(?:;\s*)+$", "", text).strip()
+
+    # -- HTMLParser hooks -------------------------------------------------
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "table":
+            self._table_depth += 1
+            return
+        if self._table_depth == 0:
+            return
+
+        if tag == "caption":
+            self._in_caption = True
+            return
+
+        if tag == "tr":
+            if self._table_depth == 1:
+                self._row = []
+                self._row_is_header = True
+            # Nested tables (depth > 1) keep flowing into the current cell.
+            return
+
+        if tag in {"td", "th"}:
+            if self._table_depth == 1:
+                self._cell_parts = []
+                self._cell_is_header = tag == "th"
+                if tag == "td":
+                    self._row_is_header = False
+            return
+
+        if tag in self.LIST_BREAK_TAGS and self._cell_parts is not None:
+            self._cell_parts.append("; ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "table":
+            self._table_depth = max(0, self._table_depth - 1)
+            return
+        if self._table_depth == 0:
+            return
+
+        if tag == "caption":
+            self._in_caption = False
+            return
+
+        if tag in {"td", "th"}:
+            if self._table_depth == 1 and self._cell_parts is not None and self._row is not None:
+                self._row.append(self._clean(self._cell_parts))
+            self._cell_parts = None
+            return
+
+        if tag == "tr":
+            if self._table_depth == 1 and self._row is not None:
+                if any(cell for cell in self._row):
+                    self.rows.append(self._row)
+                    self.header_rows.append(self._row_is_header and len(self._row) > 1)
+                self._row = None
+            return
+
+    def handle_data(self, data: str) -> None:
+        if self._table_depth == 0:
+            return
+        if self._in_caption:
+            self.caption_parts.append(data)
+        elif self._cell_parts is not None:
+            self._cell_parts.append(data)
+
+    def handle_entityref(self, name: str) -> None:  # pragma: no cover - convert_charrefs
+        self.handle_data(unescape(f"&{name};"))
+
+
+def strip_html_tags(text: str) -> str:
+    """Remove inline markup, keeping the visible text."""
+
+    if not text:
+        return ""
+    text = re.sub(r"(?i)<br\s*/?>", " ", text)
+    text = re.sub(r"(?i)</?(?:li|item|listitem|p|div|ul|ol|list)[^>]*>", "; ", text)
+    text = _ANY_TAG_RE.sub(" ", text)
+    text = unescape(text)
+    return normalize_text(re.sub(r"\s*;\s*", "; ", text))
+
+
+def html_table_to_text(html: str, *, max_header_chars: int = 60) -> str:
+    """Convert an openFDA ``*_table`` field into readable row-wise text.
+
+    Falls back to plain tag-stripped text when no rows can be recovered.
+    """
+
+    if not html or not html.strip():
+        return ""
+
+    parser = _TableToRows()
+    try:
+        parser.feed(html)
+        parser.close()
+    except Exception:  # pragma: no cover - malformed markup must never break parsing
+        return strip_html_tags(html)
+
+    caption = normalize_text(" ".join(parser.caption_parts).replace("\u00a0", " "))
+    rows = parser.rows
+    if not rows:
+        return strip_html_tags(html)
+
+    headers: list[str] | None = None
+    data_rows = rows
+    if parser.header_rows and parser.header_rows[0]:
+        headers = rows[0]
+        data_rows = rows[1:]
+    elif len(rows) >= 3 and len(rows[0]) > 1:
+        # Some tables use a plain first row as the header: short, label-like cells
+        # that contain no digits or percentages.
+        first = rows[0]
+        if all(len(cell) <= max_header_chars and not re.search(r"\d", cell) for cell in first):
+            headers = first
+            data_rows = rows[1:]
+
+    if headers is not None and any(len(cell) > max_header_chars for cell in headers):
+        headers = None
+        data_rows = rows
+
+    lines: list[str] = []
+    if caption:
+        lines.append(caption)
+
+    for row in data_rows:
+        cells = [cell for cell in row if cell]
+        if not cells:
+            continue
+        if headers and 1 < len(cells) <= len(headers):
+            pairs = [f"{headers[index]}: {cell}" for index, cell in enumerate(cells)]
+            lines.append(" | ".join(pairs))
+        elif headers and len(cells) == 1:
+            # A single spanning cell (rowspan/colspan) is a sub-heading.
+            lines.append(cells[0])
+        else:
+            lines.append(" | ".join(cells))
+
+    text = "\n".join(lines)
+    return normalize_text(text)
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+")

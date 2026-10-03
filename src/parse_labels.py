@@ -24,6 +24,7 @@ from src.utils import (
     clean_section_text,
     ensure_dirs,
     get_logger,
+    html_table_to_text,
     is_table_field,
     label_effective_time,
     label_identity,
@@ -48,7 +49,11 @@ def extract_sections(label: dict, drug: str, min_chars: int = MIN_SECTION_CHARS)
     records: list[dict] = []
 
     for section, (source_field, raw_text) in label_section_map(label).items():
-        text = clean_section_text(raw_text, section)
+        if is_table_field(source_field):
+            # *_table fields hold HTML markup; recover readable rows from it.
+            text = html_table_to_text(raw_text)
+        else:
+            text = clean_section_text(raw_text, section)
         if len(text) < min_chars:
             continue
         records.append(
