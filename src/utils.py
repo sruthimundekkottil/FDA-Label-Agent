@@ -11,7 +11,7 @@ import logging
 import os
 import re
 from html import unescape
-from html.parser import HTMLParser
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -78,6 +78,20 @@ def is_table_field(field: str) -> bool:
     return field.endswith("_table")
 
 
+def parent_section_name(field: str) -> str:
+    """``adverse_reactions_table`` -> ``adverse_reactions``.
+
+    Table records are stored under their openFDA field name (``..._table``).
+    Retrieval hit-checking works on canonical section names, so table chunks are
+    labelled with the section they belong to. Unknown ``*_table`` fields keep
+    their stripped name (they simply never match a gold section).
+    """
+
+    if not is_table_field(field):
+        return field
+    return field[: -len("_table")]
+
+
 # --------------------------------------------------------------------------- #
 # Config / env
 # --------------------------------------------------------------------------- #
@@ -134,7 +148,8 @@ def write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def read_jsonl(path: Path) -> list[dict]:
+def read_jsonl(path: Path | str) -> list[dict]:
+    path = Path(path)
     records: list[dict] = []
     if not path.exists():
         return records
@@ -146,7 +161,8 @@ def read_jsonl(path: Path) -> list[dict]:
     return records
 
 
-def write_jsonl(path: Path, records: Iterable[dict]) -> int:
+def write_jsonl(path: Path | str, records: Iterable[dict]) -> int:
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     with path.open("w", encoding="utf-8") as handle:
@@ -257,184 +273,306 @@ def clean_section_text(raw: str, section: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# HTML tables -> readable rows
+# HTML tables -> readable rows (BeautifulSoup + lxml)
 # --------------------------------------------------------------------------- #
 _ANY_TAG_RE = re.compile(r"<[a-zA-Z/][^>]*>")
+_SEPARATOR_BLOCKS = {"p", "div", "li", "item", "listitem", "caption"}
 
 
-class _TableToRows(HTMLParser):
-    """Collect caption, header row and data rows from (possibly nested) HTML tables.
+def _soup(markup: str):
+    """Parse HTML with lxml when available, falling back to the stdlib parser."""
 
-    openFDA puts table content in HTML-ish ``*_table`` fields. Raw markup is
-    useless for embeddings, so we recover the rows:
+    from bs4 import BeautifulSoup
 
-        <tr><th>Adverse reaction</th><th>Drug</th></tr>
-        <tr><td>Nausea</td><td>25%</td></tr>
+    for parser in ("lxml", "html.parser"):
+        try:
+            return BeautifulSoup(markup, parser)
+        except Exception:  # pragma: no cover - only if lxml is missing/broken
+            continue
+    raise RuntimeError("no usable HTML parser")  # pragma: no cover
 
-    becomes ``Adverse reaction: Nausea | Drug: 25%``.
-    """
 
-    LIST_BREAK_TAGS = {"li", "item", "listitem", "p", "div", "br"}
+def _node_text(node) -> str:
+    """Visible text of a node, flattening lists into ``; ``-separated text."""
 
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.caption_parts: list[str] = []
-        self.rows: list[list[str]] = []
-        self.header_rows: list[bool] = []
+    from bs4 import NavigableString
 
-        self._table_depth = 0
-        self._in_caption = False
-        self._row: list[str] | None = None
-        self._row_is_header = False
-        self._cell_parts: list[str] | None = None
-        self._cell_is_header = False
-        self._skip_text = False
+    if isinstance(node, NavigableString):
+        return str(node)
+    name = getattr(node, "name", "") or ""
+    inner = "".join(_node_text(child) for child in node.children)
+    if name == "br":
+        return " "
+    if name in _SEPARATOR_BLOCKS:
+        return f"; {inner}"
+    return inner
 
-    # -- helpers ---------------------------------------------------------
-    @staticmethod
-    def _clean(chunks: list[str]) -> str:
-        text = " ".join(chunks)
-        text = text.replace("\u00a0", " ")
-        text = re.sub(r"\s*;\s*", "; ", text)
-        text = re.sub(r"\s+", " ", text)
-        return re.sub(r"^(?:;\s*)+|(?:;\s*)+$", "", text).strip()
 
-    # -- HTMLParser hooks -------------------------------------------------
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "table":
-            self._table_depth += 1
-            return
-        if self._table_depth == 0:
-            return
-
-        if tag == "caption":
-            self._in_caption = True
-            return
-
-        if tag == "tr":
-            if self._table_depth == 1:
-                self._row = []
-                self._row_is_header = True
-            # Nested tables (depth > 1) keep flowing into the current cell.
-            return
-
-        if tag in {"td", "th"}:
-            if self._table_depth == 1:
-                self._cell_parts = []
-                self._cell_is_header = tag == "th"
-                if tag == "td":
-                    self._row_is_header = False
-            return
-
-        if tag in self.LIST_BREAK_TAGS and self._cell_parts is not None:
-            self._cell_parts.append("; ")
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "table":
-            self._table_depth = max(0, self._table_depth - 1)
-            return
-        if self._table_depth == 0:
-            return
-
-        if tag == "caption":
-            self._in_caption = False
-            return
-
-        if tag in {"td", "th"}:
-            if self._table_depth == 1 and self._cell_parts is not None and self._row is not None:
-                self._row.append(self._clean(self._cell_parts))
-            self._cell_parts = None
-            return
-
-        if tag == "tr":
-            if self._table_depth == 1 and self._row is not None:
-                if any(cell for cell in self._row):
-                    self.rows.append(self._row)
-                    self.header_rows.append(self._row_is_header and len(self._row) > 1)
-                self._row = None
-            return
-
-    def handle_data(self, data: str) -> None:
-        if self._table_depth == 0:
-            return
-        if self._in_caption:
-            self.caption_parts.append(data)
-        elif self._cell_parts is not None:
-            self._cell_parts.append(data)
-
-    def handle_entityref(self, name: str) -> None:  # pragma: no cover - convert_charrefs
-        self.handle_data(unescape(f"&{name};"))
+def _clean_cell(raw: str) -> str:
+    text = unescape(raw).replace("\u00a0", " ")
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s*;\s*", "; ", text)
+    text = re.sub(r"(?:;\s*){2,}", "; ", text)
+    return re.sub(r"^(?:;\s*)+|(?:\s*;)+$", "", text).strip()
 
 
 def strip_html_tags(text: str) -> str:
-    """Remove inline markup, keeping the visible text."""
+    """Remove markup from a field that is not a table, keeping the visible text."""
 
     if not text:
         return ""
-    text = re.sub(r"(?i)<br\s*/?>", " ", text)
-    text = re.sub(r"(?i)</?(?:li|item|listitem|p|div|ul|ol|list)[^>]*>", "; ", text)
-    text = _ANY_TAG_RE.sub(" ", text)
-    text = unescape(text)
-    return normalize_text(re.sub(r"\s*;\s*", "; ", text))
+    if not _ANY_TAG_RE.search(text):
+        return normalize_text(text)
+    try:
+        soup = _soup(text)
+        return normalize_text(soup.get_text(" "))
+    except Exception:  # pragma: no cover - never let cleaning crash the pipeline
+        return normalize_text(_ANY_TAG_RE.sub(" ", unescape(text)))
 
 
-def html_table_to_text(html: str, *, max_header_chars: int = 60) -> str:
-    """Convert an openFDA ``*_table`` field into readable row-wise text.
+@dataclass
+class ParsedTable:
+    """Structured view of one openFDA ``*_table`` field.
 
-    Falls back to plain tag-stripped text when no rows can be recovered.
+    ``rows`` holds one formatted line per table row, which is what makes it safe
+    for the table-aware chunker: a row is never split, because chunk boundaries
+    only ever fall between lines.
     """
 
-    if not html or not html.strip():
-        return ""
+    caption: str = ""
+    header: list[str] = field(default_factory=list)
+    rows: list[str] = field(default_factory=list)
+    context_lines: list[str] = field(default_factory=list)
 
-    parser = _TableToRows()
+    @property
+    def text(self) -> str:
+        lines = [line for line in [self.caption, *self.context_lines, *self.rows] if line]
+        return normalize_text("\n".join(lines))
+
+
+_MEASUREMENT_RE = re.compile(
+    r"(?:"
+    r"\d\s*%"                                   # 26%
+    r"|\d\s*\(\d+(?:\.\d+)?\)"                  # 7 (4)
+    r"|\d\s*(?:mg|ml|mcg|g|iu|units?|hours?|days?|weeks?|years?|tablets?|capsules?)\b"
+    r"|^<?\d+(?:[.,]\d+)?$"                     # a bare number
+    r"|\bn\s*=\s*\d+"                           # N = 176
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _cell_is_measurement(value: str) -> bool:
+    """True when a cell looks like a measured value rather than a column label."""
+
+    return bool(_MEASUREMENT_RE.search(value.strip()))
+
+
+def parse_table(markup: str) -> ParsedTable:
+    """Parse an openFDA table field into caption + header + one line per row."""
+
+    table = ParsedTable()
+    if not markup or not markup.strip():
+        return table
+
     try:
-        parser.feed(html)
-        parser.close()
-    except Exception:  # pragma: no cover - malformed markup must never break parsing
-        return strip_html_tags(html)
+        soup = _soup(markup)
+    except Exception:  # pragma: no cover
+        table.rows = [line for line in strip_html_tags(markup).split("\n") if line]
+        return table
 
-    caption = normalize_text(" ".join(parser.caption_parts).replace("\u00a0", " "))
-    rows = parser.rows
-    if not rows:
-        return strip_html_tags(html)
+    top_table = soup.find("table")
+    if top_table is None:
+        table.rows = [line for line in strip_html_tags(markup).split("\n") if line]
+        return table
 
-    headers: list[str] | None = None
-    data_rows = rows
-    if parser.header_rows and parser.header_rows[0]:
-        headers = rows[0]
-        data_rows = rows[1:]
-    elif len(rows) >= 3 and len(rows[0]) > 1:
-        # Some tables use a plain first row as the header: short, label-like cells
-        # that contain no digits or percentages.
-        first = rows[0]
-        if all(len(cell) <= max_header_chars and not re.search(r"\d", cell) for cell in first):
-            headers = first
-            data_rows = rows[1:]
+    caption_tag = top_table.find("caption")
+    if caption_tag is not None:
+        table.caption = _clean_cell(_node_text(caption_tag))
 
-    if headers is not None and any(len(cell) > max_header_chars for cell in headers):
-        headers = None
-        data_rows = rows
+    # Only rows of the outermost table: nested tables inside a cell are flattened
+    # into that cell's text instead of becoming rows of their own.
+    trs = [tr for tr in top_table.find_all("tr") if tr.find_parent("table") is top_table]
 
-    lines: list[str] = []
-    if caption:
-        lines.append(caption)
+    indexed_rows: list[list[tuple[int, str]]] = []
+    header_rows: list[dict[int, str]] = []
+    pending: dict[int, tuple[str, int]] = {}  # column -> (value, rows left)
 
-    for row in data_rows:
-        cells = [cell for cell in row if cell]
+    for tr in trs:
+        cells = tr.find_all(["td", "th"], recursive=False)
         if not cells:
             continue
-        if headers and 1 < len(cells) <= len(headers):
-            pairs = [f"{headers[index]}: {cell}" for index, cell in enumerate(cells)]
-            lines.append(" | ".join(pairs))
-        elif headers and len(cells) == 1:
-            # A single spanning cell (rowspan/colspan) is a sub-heading.
-            lines.append(cells[0])
-        else:
-            lines.append(" | ".join(cells))
 
-    text = "\n".join(lines)
-    return normalize_text(text)
+        entries: list[tuple[int, str]] = []
+        column = 0
+        is_header_row = True
+        for cell in cells:
+            while column in pending:
+                value, remaining = pending[column]
+                if remaining > 0:
+                    entries.append((column, value))
+                if remaining <= 1:
+                    pending.pop(column, None)
+                else:
+                    pending[column] = (value, remaining - 1)
+                column += 1
+
+            value = _clean_cell(_node_text(cell))
+            try:
+                colspan = max(1, int(cell.get("colspan", 1)))
+            except (TypeError, ValueError):
+                colspan = 1
+            try:
+                rowspan = max(1, int(cell.get("rowspan", 1)))
+            except (TypeError, ValueError):
+                rowspan = 1
+
+            if cell.name != "th":
+                is_header_row = False
+            if value:
+                entries.append((column, value))
+                if rowspan > 1:
+                    pending[column] = (value, rowspan - 1)
+            column += colspan
+
+        # Flush any still-pending rowspan values that belong to trailing columns.
+        for pending_column in sorted(pending):
+            if pending_column >= column:
+                value, remaining = pending[pending_column]
+                if remaining > 0:
+                    entries.append((pending_column, value))
+                if remaining <= 1:
+                    pending.pop(pending_column, None)
+                else:
+                    pending[pending_column] = (value, remaining - 1)
+
+        if not entries:
+            continue
+        indexed_rows.append(sorted(entries))
+        if is_header_row:
+            header_rows.append({column: value for column, value in entries})
+
+    if not indexed_rows:
+        table.rows = [line for line in strip_html_tags(markup).split("\n") if line]
+        return table
+
+    # Leading single-cell rows are titles/sub-headings (spanning rows), not data.
+    lead = 0
+    while lead < len(indexed_rows) and len(indexed_rows[lead]) == 1:
+        table.context_lines.append(indexed_rows[lead][0][1])
+        lead += 1
+
+    def _looks_like_values(entries: list[tuple[int, str]]) -> bool:
+        values = [value for _, value in entries]
+        if len(values) < 2:
+            return False
+        measured = sum(1 for value in values if _cell_is_measurement(value))
+        return measured >= max(1, len(values) // 2)
+
+    def _is_labelish(entries: list[tuple[int, str]]) -> bool:
+        """Short, non-measurement cells - column labels such as genotype codes."""
+
+        values = [value for _, value in entries]
+        return bool(values) and all(
+            len(value) <= 60 and not _cell_is_measurement(value) for value in values
+        )
+
+    # Column -> header label. Column indices (not positions) are used on purpose:
+    # openFDA tables pad the header row with empty corner cells, so positional
+    # matching would shift every label by one column.
+    header: dict[int, str] = {}
+    n_header_rows = 0
+    if header_rows:
+        header = dict(header_rows[-1])
+        n_header_rows = len(header_rows)
+        for coarse in header_rows[:-1]:
+            if set(coarse) != set(header):
+                table.context_lines.append(" / ".join(value for _, value in sorted(coarse.items())))
+    else:
+        # No <th> at all: treat the first multi-cell row as a header when a later
+        # row looks like data. Header cells that carry numbers (dose levels such
+        # as "Sitagliptin 100 mg once daily") are also kept as a data line, so a
+        # wrong guess cannot silently delete content.
+        candidate = next(
+            (index for index in range(lead, len(indexed_rows)) if len(indexed_rows[index]) > 1),
+            None,
+        )
+        if candidate is not None and len(indexed_rows) - candidate >= 3:
+            next_data = next(
+                (
+                    index
+                    for index in range(candidate + 1, len(indexed_rows))
+                    if _looks_like_values(indexed_rows[index])
+                ),
+                None,
+            )
+            # A header is a label row; very long cells mean we grabbed a data or
+            # title row instead, so leave the table unlabelled in that case.
+            plausible = all(len(value) <= 120 for _, value in indexed_rows[candidate])
+            if next_data is not None and plausible:
+                header = dict(indexed_rows[candidate])
+                n_header_rows = candidate + 1
+                # Grouped header: a coarse row ("VKORC1 | CYP2C9") followed by a
+                # finer row with more columns ("*1/*1 | *1/*2 | ..."). The finer
+                # row is the real column header.
+                follow = candidate + 1
+                if (
+                    follow < len(indexed_rows)
+                    and len(indexed_rows[follow]) > len(indexed_rows[candidate])
+                    and _is_labelish(indexed_rows[candidate])
+                    and _is_labelish(indexed_rows[follow])
+                ):
+                    header = dict(indexed_rows[follow])
+                    n_header_rows = follow + 1
+                    table.context_lines.append(
+                        " / ".join(value for _, value in indexed_rows[candidate])
+                    )
+                if any(re.search(r"\d", value) for value in header.values()):
+                    table.context_lines.append(
+                        " | ".join(value for _, value in indexed_rows[candidate])
+                    )
+
+    header = {
+        column: (value if len(value) <= 80 else value[:79].rstrip() + "…")
+        for column, value in header.items()
+    }
+
+    # Column alignment: several openFDA tables leave the row-label corner empty,
+    # so the header can sit one (or more) columns left of the data it describes.
+    data_columns = [
+        max(column for column, _ in entries)
+        for entries in indexed_rows[max(n_header_rows, lead):]
+        if len(entries) > 1
+    ]
+    if header and data_columns:
+        shift = max(data_columns) - max(header)
+        if shift != 0:
+            header = {column + shift: value for column, value in header.items()}
+
+    table.header = [value for _, value in sorted(header.items())]
+
+    rows: list[str] = []
+    for entries in indexed_rows[max(n_header_rows, lead):]:
+        if not entries:
+            continue
+        if len(entries) == 1:
+            # A spanning cell: a sub-heading or a footnote, never a labelled row.
+            rows.append(entries[0][1])
+            continue
+        parts: list[str] = []
+        for column, value in entries:
+            label = header.get(column)
+            parts.append(f"{label}: {value}" if label else value)
+        if parts:
+            rows.append(" | ".join(parts))
+    table.rows = rows
+    return table
+
+
+def html_table_to_text(markup: str, *, max_header_chars: int = 60) -> str:
+    """Readable row-wise text for an openFDA ``*_table`` field."""
+
+    return parse_table(markup).text
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+")
