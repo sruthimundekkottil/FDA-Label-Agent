@@ -18,6 +18,9 @@ data/processed/
 # keep the eval set under version control (it is hand-curated)
 !data/eval/
 !data/eval/**
+# local safety net written by src/review_questions.py before it edits the eval set
+data/eval/questions.backup.jsonl
+data/eval/*.tmp
 
 # --- python ------------------------------------------------------------------
 __pycache__/

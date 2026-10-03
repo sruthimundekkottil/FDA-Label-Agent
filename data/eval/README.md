@@ -56,6 +56,16 @@ For each line: check the question reads naturally, check that `gold_section`
 really contains the answer, correct or trim `gold_answer_keypoints` (especially
 for table rows, which contain raw column text), then set `"verified": true`.
 
+The interactive reviewer walks the unverified questions one at a time, shows the
+gold label text next to each question, and saves after every decision:
+
+```bash
+python -m src.review_questions          # [v]erify / [d]elete / [s]kip / [q]uit
+```
+
+It writes a backup of the question file before the first edit
+(`data/eval/questions.backup.jsonl`).
+
 The evaluation scripts report how many questions are verified vs unverified and
 accept a `--verified-only` flag; until questions are verified, any reported
 number must be described as computed on **model-drafted, unverified** questions.
