@@ -25,6 +25,7 @@ import platform
 import sys
 import time
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 
 from src.chunking import STRATEGIES
@@ -77,20 +78,29 @@ def load_sentence_transformer(
 
     Loading with ``local_files_only=True`` first keeps re-runs fast and works
     offline; if the model is not cached yet we fall back to downloading it.
+    Results are memoised so a process never loads the same model twice.
     """
 
+    return _load_sentence_transformer_cached(
+        model_name,
+        str(model_cache_folder(cache_folder)),
+        bool(allow_download),
+    )
+
+
+@lru_cache(maxsize=4)
+def _load_sentence_transformer_cached(model_name: str, cache_folder: str, allow_download: bool):
     import os
 
     from sentence_transformers import SentenceTransformer
 
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
-    folder = model_cache_folder(cache_folder)
     try:
-        return SentenceTransformer(model_name, cache_folder=str(folder), local_files_only=True)
+        return SentenceTransformer(model_name, cache_folder=cache_folder, local_files_only=True)
     except Exception:
         if not allow_download:
             raise
-        return SentenceTransformer(model_name, cache_folder=str(folder))
+        return SentenceTransformer(model_name, cache_folder=cache_folder)
 
 
 def load_embedder(model_name: str, cache_folder: Path | None = None):

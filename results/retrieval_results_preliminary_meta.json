@@ -1,0 +1,38 @@
+{
+  "strategies": [
+    "fixed",
+    "section",
+    "table_aware"
+  ],
+  "retrievers": [
+    "vector",
+    "bm25",
+    "hybrid",
+    "hybrid_rerank"
+  ],
+  "k_values": [
+    1,
+    3,
+    5,
+    10
+  ],
+  "drug_filter": [
+    "none",
+    "auto"
+  ],
+  "n_answerable_evaluated": 36,
+  "index_models": {
+    "fixed": "BAAI/bge-small-en-v1.5",
+    "section": "BAAI/bge-small-en-v1.5",
+    "table_aware": "BAAI/bge-small-en-v1.5"
+  },
+  "run_kind": "preliminary",
+  "generated_at": "2026-10-04T09:38:55+00:00",
+  "question_file": "C:\\Users\\Sruthi Krishna M\\Documents\\study\\projects\\drug-label-rag\\data\\eval\\questions.jsonl",
+  "questions_total": 40,
+  "questions_verified": 0,
+  "questions_unverified": 40,
+  "questions_selected": 40,
+  "csv": "C:\\Users\\Sruthi Krishna M\\Documents\\study\\projects\\drug-label-rag\\results\\retrieval_results_preliminary.csv",
+  "figure": "C:\\Users\\Sruthi Krishna M\\Documents\\study\\projects\\drug-label-rag\\results\\figures\\recall_at_5_preliminary.png"
+}

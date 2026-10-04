@@ -161,6 +161,30 @@ def read_jsonl(path: Path | str) -> list[dict]:
     return records
 
 
+def load_eval_questions(
+    path: Path | str | None = None,
+    *,
+    verified_only: bool = False,
+) -> tuple[list[dict], dict]:
+    """Load the evaluation questions plus a small stats dict.
+
+    Shared by every evaluation script so that ``--verified-only`` means the same
+    thing everywhere and each run can state exactly how many questions it used.
+    """
+
+    records = read_jsonl(path or QUESTIONS_JSONL)
+    verified = [record for record in records if record.get("verified")]
+    selected = verified if verified_only else records
+    stats = {
+        "total": len(records),
+        "verified": len(verified),
+        "unverified": len(records) - len(verified),
+        "selected": len(selected),
+        "verified_only": verified_only,
+    }
+    return selected, stats
+
+
 def write_jsonl(path: Path | str, records: Iterable[dict]) -> int:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
