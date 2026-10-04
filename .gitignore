@@ -20,6 +20,7 @@ data/processed/
 !data/eval/**
 # local safety net written by src/review_questions.py before it edits the eval set
 data/eval/questions.backup.jsonl
+data/eval/questions.backup-*.jsonl
 data/eval/*.tmp
 
 # --- python ------------------------------------------------------------------
