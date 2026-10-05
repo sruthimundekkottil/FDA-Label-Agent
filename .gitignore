@@ -32,7 +32,8 @@ __pycache__/
 .ruff_cache/
 
 # --- results artefacts that are cheap to regenerate ---------------------------
-results/figures/*.png
+# preliminary runs stay out of the repo; the reported figures are committed
+results/figures/*_preliminary.png
 
 # --- editors / OS ------------------------------------------------------------
 .vscode/
