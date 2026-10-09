@@ -163,3 +163,11 @@ def test_load_eval_questions_verified_only_filter(tmp_path) -> None:
     only_verified, stats_verified = load_eval_questions(path, verified_only=True)
     assert [record["id"] for record in only_verified] == ["q1"]
     assert stats_verified["selected"] == 1
+
+
+def test_portable_path_is_project_relative_with_forward_slashes() -> None:
+    from src.evaluate_retrieval import portable_path
+    from src.utils import PROJECT_ROOT
+
+    assert portable_path(PROJECT_ROOT / "results" / "figures" / "x.png") == "results/figures/x.png"
+    assert portable_path("data/eval/questions.jsonl") == "data/eval/questions.jsonl"

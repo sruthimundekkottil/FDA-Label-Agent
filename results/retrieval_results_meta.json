@@ -28,11 +28,11 @@
   },
   "run_kind": "verified_only",
   "generated_at": "2026-10-05T17:03:11+00:00",
-  "question_file": "C:\\Users\\Sruthi Krishna M\\Documents\\study\\projects\\drug-label-rag\\data\\eval\\questions.jsonl",
+  "question_file": "data/eval/questions.jsonl",
   "questions_total": 35,
   "questions_verified": 24,
   "questions_unverified": 11,
   "questions_selected": 24,
-  "csv": "C:\\Users\\Sruthi Krishna M\\Documents\\study\\projects\\drug-label-rag\\results\\retrieval_results.csv",
-  "figure": "C:\\Users\\Sruthi Krishna M\\Documents\\study\\projects\\drug-label-rag\\results\\figures\\recall_at_5.png"
+  "csv": "results/retrieval_results.csv",
+  "figure": "results/figures/recall_at_5.png"
 }

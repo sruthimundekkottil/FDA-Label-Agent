@@ -24,6 +24,13 @@ transformers==5.18.0
 sentence-transformers==6.1.0
 faiss-cpu==1.15.1
 
+# --- LLM (agent adapter; Gemini via google-genai) ---------------------------
+google-genai==2.29.0
+
+# --- agent graph (control flow only; no LangChain LLM wrappers are used) -------
+# pulls in langchain-core 1.6.9 as a dependency
+langgraph==1.2.14
+
 # --- app ---------------------------------------------------------------------
 streamlit==1.65.0
 

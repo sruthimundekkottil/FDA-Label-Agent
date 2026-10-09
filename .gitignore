@@ -40,3 +40,7 @@ results/figures/*_preliminary.png
 .idea/
 .DS_Store
 Thumbs.db
+.env
+
+# ad-hoc agent CLI logs (eval runs under results/runs/<run_id>/ are kept)
+results/runs/adhoc/

@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -32,6 +33,7 @@ from src.retrieval import RETRIEVERS
 from src.utils import (
     FIGURES_DIR,
     INDEX_DIR,
+    PROJECT_ROOT,
     QUESTIONS_JSONL,
     RESULTS_DIR,
     detect_drug_in_query,
@@ -44,6 +46,19 @@ from src.utils import (
 )
 
 DEFAULT_K = (1, 3, 5, 10)
+
+
+def portable_path(path: Path | str) -> str:
+    """Path as written into results metadata: relative to the project root, with
+    forward slashes, so committed files carry no machine-specific (or personal)
+    absolute paths. Falls back to the bare file name if no relative path exists
+    (e.g. a different drive on Windows)."""
+
+    try:
+        relative = os.path.relpath(Path(path).resolve(), PROJECT_ROOT)
+    except ValueError:
+        return Path(path).name
+    return Path(relative).as_posix()
 
 logger = get_logger("evaluate_retrieval")
 
@@ -441,13 +456,13 @@ def main(argv: list[str] | None = None) -> int:
         {
             "run_kind": run_kind,
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "question_file": str(args.questions),
+            "question_file": portable_path(args.questions),
             "questions_total": stats["total"],
             "questions_verified": stats["verified"],
             "questions_unverified": stats["unverified"],
             "questions_selected": stats["selected"],
-            "csv": str(out_path),
-            "figure": None if args.no_figure else str(figure_path),
+            "csv": portable_path(out_path),
+            "figure": None if args.no_figure else portable_path(figure_path),
         }
     )
 
