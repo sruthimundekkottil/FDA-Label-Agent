@@ -44,3 +44,5 @@ Thumbs.db
 
 # ad-hoc agent CLI logs (eval runs under results/runs/<run_id>/ are kept)
 results/runs/adhoc/
+# API logs contain user questions
+results/runs/api/

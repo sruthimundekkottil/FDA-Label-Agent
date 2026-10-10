@@ -166,6 +166,25 @@ class ToolBox:
             self._section_chunks = read_jsonl(self.index_dir / TABLE_STRATEGY / "chunks.jsonl")
         return self._section_chunks
 
+    def load(self) -> "ToolBox":
+        """Load every index and model now instead of on the first tool call.
+
+        Used by the API at startup so no request pays the loading cost. Stub
+        retrievers injected through ``retrievers=`` are left as they are.
+        """
+
+        labels = self._labels_retriever()
+        if isinstance(labels, RerankRetriever):
+            labels.model  # cross-encoder
+            vector = getattr(labels.hybrid, "vector", None)
+            if isinstance(vector, VectorRetriever):
+                vector.model  # embedding model (shared with the table index via a cache)
+        tables = self._tables_retriever()
+        if isinstance(tables, RerankRetriever):
+            tables.model
+        self._all_section_chunks()
+        return self
+
     # -- validation ------------------------------------------------------------
     def _check_drug(self, drug: str | None, *, required: bool = False) -> tuple[str | None, dict | None]:
         if not drug or not str(drug).strip():

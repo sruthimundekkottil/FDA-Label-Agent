@@ -31,9 +31,14 @@ google-genai==2.29.0
 # pulls in langchain-core 1.6.9 as a dependency
 langgraph==1.2.14
 
+# --- API ----------------------------------------------------------------------
+fastapi==0.143.0
+uvicorn==0.54.0
+
 # --- app ---------------------------------------------------------------------
 streamlit==1.65.0
 
 # --- tests + lint (CI runs both) ----------------------------------------------
 pytest==9.1.1
+httpx==0.28.1   # FastAPI TestClient
 ruff==0.17.0

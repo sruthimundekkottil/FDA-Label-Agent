@@ -18,7 +18,8 @@ one-shot version of the same pipeline.
 | Single-shot RAG with citations | done; answer-quality evaluation not run yet |
 | Agent (LangGraph flow, Gemini adapter, tools) | built and unit-tested; smoke-tested on a few questions only |
 | Agent vs single-shot evaluation | **not run yet** |
-| API (FastAPI) + Docker | not started |
+| API (FastAPI): /health, /ask, rate limit, daily cap, optional key | built and tested (mock model) |
+| Docker | not started |
 | Streamlit app | placeholder only |
 
 Best measured retrieval setup so far: section chunks, hybrid search + reranker,
@@ -57,6 +58,21 @@ python -m agent.loop --mock --query "..."    # no API key: offline stand-in mode
 
 Each run prints the answer, the searches it made and the steps used, and logs
 every step to `results/runs/adhoc/agent_log.jsonl`.
+
+Run it as a web service (indexes and models load once at startup):
+
+```bash
+uvicorn api.main:app --port 8000          # one worker: limits are kept in memory
+curl localhost:8000/health
+curl -X POST localhost:8000/ask -H "Content-Type: application/json" \
+     -d '{"question": "What are the contraindications of warfarin?"}'
+```
+
+`/ask` returns the answer, its citations and a stop reason (`answered`,
+`abstained` or `no_answer`). Set `AGENT_API_KEY` to require an `X-API-Key`
+header; `RATE_LIMIT_PER_MINUTE` (per client IP) and `DAILY_CALL_CAP` (all
+clients) protect the model quota. Over a limit you get HTTP 429; if the model
+is down or out of quota, HTTP 503.
 
 Other useful commands:
 
