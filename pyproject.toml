@@ -1,0 +1,23 @@
+# Tool configuration only (the project is not packaged; install with requirements.txt).
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+extend-exclude = ["data", "results"]
+
+[tool.ruff.lint]
+# Real errors only: syntax, undefined names, unused imports/variables, bad comparisons.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# src/ holds the original pipeline, which project rules say not to edit. It has
+# unused imports (F401) and one loop variable shadowing an import (F402); both are
+# harmless. Everything else is still checked in src/, and nothing is ignored elsewhere.
+"src/*.py" = ["F401", "F402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "needs_data: needs the built indexes under data/index/ (skipped automatically when they are missing, e.g. in CI)",
+]
